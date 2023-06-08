@@ -1,0 +1,53 @@
+1. Downloading the reference genome
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/405/GCA_000001405.15_GRCh38/seqs_for_alignment_pipelines.ucsc_ids/GCA_000001405.15_GRCh38_full_analysis_set.fna.gz
+
+2. Building index with bowtie2
+gunzip GCA_000001405.15_GRCh38_full_analysis_set.fna.gz
+bowtie2-build -f --seed 0 GCA_000001405.15_GRCh38_full_analysis_set.fna human_ref
+
+3. Mapping library.fa to reference genome
+bowtie2 -x human_ref -f library.fa -S alingment.sam
+
+4. Sorting data with samtools
+samtools sort alingment.sam 
+
+5. Getting following information: chromosome name, start and end positions, strand.
+samtools view -bS alignment.sam > alignment.bam
+bedtools bamtobed -i alignment.bam | awk -F "\t" '{OFS="\t"}{print $4,$1,$2,$3,$6}'
+
+6.Getting the gene names provided within description lines of fasta file.
+awk -F'|' '/^>/{print $3}' library.fa > gene_names.txt
+
+7. Getting the gene names based on mapping results.
+samtools view alignment.sam | awk -F'\t' -v OFS='\t' '
+    BEGIN {
+        while (getline gene < "gene_names.txt") {
+            gene_names[gene] = 1
+        }
+        close("gene_names.txt")
+    }
+    {
+        if ($3 != "*") {
+            gene_name = ($0 ~ /XO:i:([0-9]+)/) ? ($0 ~ /XO:i:([0-9]+)/ && substr($0, RSTART+5, RLENGTH-5) in gene_names ? substr($0, RSTART+5, RLENGTH-5) : "N/A") : "N/A"
+            print $0, gene_name
+        } else {
+            print $0, "N/A"
+        }
+    }
+' > "$TMP_FILE"
+cut -f 1 "$TMP_FILE" > mapped_names.txt
+cut -d "|" -f 3 mapped_names.txt > mapped_genes.txt
+rm "$TMP_FILE" mapped_names.txt
+
+8. Checking the differences in annotation between fasta genes and mapped genes
+awk 'NR==FNR { lines[NR]=$0; next }
+       { if ($0 == lines[FNR]) print; else print "" }' gene_names.txt mapped_genes.txt 
+       
+9. Getting the gene martix for genes based on TCGA-A7-A13D-01A-13R-A12P-07 results from GDC dataportal
+uniq gene_names.txt  > uniq_genes.txt
+awk 'FNR==NR { values[$1]; next } $2 in values' uniq_genes.txt /gdc_download_20230608_115738.970040/bf6e2b60-d65b-4963-8e8e-49ab3f93c3e1 > matched_lines.txt
+
+10. Getting the gene martix for genes based on TCGA-E9-A1RH-11A-34R-A169-07 results from GDC dataportal
+awk 'FNR==NR { values[$1]; next } $2 in values' uniq_genes.txt tca.tsv > matched_lines.txt
+
+
